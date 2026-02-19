@@ -24,7 +24,7 @@ uploaded_file = st.file_uploader("Upload Resume (DOCX only)", type=["docx"])
 
 
 # =========================
-# EXTRACT TEXT (DOCX ONLY)
+# EXTRACT TEXT
 # =========================
 def extract_text(path):
     return docx2txt.process(path)
@@ -43,10 +43,11 @@ def remove_original_bullets(line):
 
 # =========================
 # BRF BULLET FORMAT
+# • + TWO SPACES + TEXT
 # =========================
 def add_brf_bullet(doc, text):
     para = doc.add_paragraph()
-    para.add_run("•\t" + text)
+    para.add_run("•  " + text)
     return para
 
 
