@@ -6,7 +6,6 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 import docx2txt
-import pdfplumber
 
 # =========================
 # SETTINGS
@@ -19,25 +18,16 @@ TECH_HEADING = "Technical Skills :"
 EDU_HEADING = "Education :"
 EXP_HEADING = "Professional Experience :"
 
-st.title("BRFv1.0 Strict Resume Formatter")
+st.title("BRFv1.0 Strict Resume Formatter (DOCX Only)")
 
-uploaded_file = st.file_uploader("Upload Resume (PDF or DOCX)", type=["pdf", "docx"])
+uploaded_file = st.file_uploader("Upload Resume (DOCX only)", type=["docx"])
+
 
 # =========================
-# TEXT EXTRACTION
+# EXTRACT TEXT (DOCX ONLY)
 # =========================
 def extract_text(path):
-    ext = os.path.splitext(path)[1].lower()
-    text = ""
-
-    if ext == ".pdf":
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-    elif ext == ".docx":
-        text = docx2txt.process(path)
-
-    return text
+    return docx2txt.process(path)
 
 
 # =========================
@@ -53,7 +43,6 @@ def remove_original_bullets(line):
 
 # =========================
 # BRF BULLET FORMAT
-# • + TAB + TEXT
 # =========================
 def add_brf_bullet(doc, text):
     para = doc.add_paragraph()
@@ -76,7 +65,7 @@ def apply_global_formatting(doc):
 
 
 # =========================
-# PROJECT HEADER
+# PROJECT HEADER FORMAT
 # =========================
 def add_project_header(doc, header_line):
     para = doc.add_paragraph()
@@ -108,21 +97,17 @@ def add_project_header(doc, header_line):
 def parse_sections(text):
 
     if not text or not text.strip():
-        raise ValueError("Unable to extract text from resume.")
+        raise ValueError("Resume text could not be extracted. Please upload editable DOCX file.")
 
     lines = [l.strip() for l in text.split("\n") if l.strip()]
 
     if len(lines) == 0:
-        raise ValueError("Resume appears empty after extraction.")
+        raise ValueError("Resume appears empty.")
 
     name = lines[0]
 
     name_parts = name.split()
-
-    if len(name_parts) == 0:
-        first = "Candidate"
-        last = ""
-    elif len(name_parts) == 1:
+    if len(name_parts) == 1:
         first = name_parts[0]
         last = ""
     else:
@@ -161,7 +146,7 @@ def parse_sections(text):
 
 
 # =========================
-# CREATE DOCUMENT
+# CREATE BRF DOCUMENT
 # =========================
 def create_document(name, first, last, sections):
 
@@ -265,4 +250,4 @@ if uploaded_file:
             )
 
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(str(e))
