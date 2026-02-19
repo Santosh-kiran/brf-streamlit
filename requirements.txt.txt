@@ -1,4 +1,0 @@
-streamlit
-python-docx
-docx2txt
-pdfplumber
