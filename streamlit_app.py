@@ -24,9 +24,8 @@ st.title("BRFv1.0 Strict Resume Formatter")
 uploaded_file = st.file_uploader("Upload Resume (PDF or DOCX)", type=["pdf", "docx"])
 
 # =========================
-# FUNCTIONS
+# TEXT EXTRACTION
 # =========================
-
 def extract_text(path):
     ext = os.path.splitext(path)[1].lower()
     text = ""
@@ -41,6 +40,9 @@ def extract_text(path):
     return text
 
 
+# =========================
+# REMOVE ORIGINAL BULLETS
+# =========================
 def remove_original_bullets(line):
     return re.sub(
         r'^\s*[\-\•\●\▪\◦\■\□\*\–\—\→\►\➤\➔\➢\✓\✔\·]+\s*',
@@ -49,12 +51,19 @@ def remove_original_bullets(line):
     )
 
 
+# =========================
+# BRF BULLET FORMAT
+# • + TAB + TEXT
+# =========================
 def add_brf_bullet(doc, text):
     para = doc.add_paragraph()
     para.add_run("•\t" + text)
     return para
 
 
+# =========================
+# GLOBAL FORMATTING
+# =========================
 def apply_global_formatting(doc):
     style = doc.styles["Normal"]
     style.font.name = FONT_NAME
@@ -66,6 +75,9 @@ def apply_global_formatting(doc):
         p.paragraph_format.line_spacing = 1
 
 
+# =========================
+# PROJECT HEADER
+# =========================
 def add_project_header(doc, header_line):
     para = doc.add_paragraph()
 
@@ -90,13 +102,32 @@ def add_project_header(doc, header_line):
         para.add_run(header_line)
 
 
+# =========================
+# SAFE PARSER
+# =========================
 def parse_sections(text):
 
-    lines = [l.rstrip() for l in text.split("\n")]
+    if not text or not text.strip():
+        raise ValueError("Unable to extract text from resume.")
 
-    name = lines[0].strip()
-    first = name.split()[0]
-    last = " ".join(name.split()[1:]) if len(name.split()) > 1 else ""
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    if len(lines) == 0:
+        raise ValueError("Resume appears empty after extraction.")
+
+    name = lines[0]
+
+    name_parts = name.split()
+
+    if len(name_parts) == 0:
+        first = "Candidate"
+        last = ""
+    elif len(name_parts) == 1:
+        first = name_parts[0]
+        last = ""
+    else:
+        first = name_parts[0]
+        last = " ".join(name_parts[1:])
 
     sections = {
         "summary": [],
@@ -129,15 +160,18 @@ def parse_sections(text):
     return name, first, last, sections
 
 
+# =========================
+# CREATE DOCUMENT
+# =========================
 def create_document(name, first, last, sections):
 
     doc = Document()
 
-    # Name
+    # Name centered
     p = doc.add_paragraph(name)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Summary
+    # ================= SUMMARY =================
     p = doc.add_paragraph(SUMMARY_HEADING)
     p.runs[0].bold = True
 
@@ -148,7 +182,7 @@ def create_document(name, first, last, sections):
 
     doc.add_paragraph()
 
-    # Technical
+    # ================= TECHNICAL =================
     p = doc.add_paragraph(TECH_HEADING)
     p.runs[0].bold = True
 
@@ -157,7 +191,7 @@ def create_document(name, first, last, sections):
         if cleaned:
             doc.add_paragraph(cleaned)
 
-    # Education
+    # ================= EDUCATION =================
     p = doc.add_paragraph(EDU_HEADING)
     p.runs[0].bold = True
 
@@ -168,7 +202,7 @@ def create_document(name, first, last, sections):
 
     doc.add_paragraph()
 
-    # Experience
+    # ================= EXPERIENCE =================
     p = doc.add_paragraph(EXP_HEADING)
     p.runs[0].bold = True
 
@@ -209,22 +243,26 @@ def create_document(name, first, last, sections):
 # =========================
 # MAIN EXECUTION
 # =========================
-
 if uploaded_file:
 
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(uploaded_file.read())
+            tmp_path = tmp.name
 
-    text = extract_text(tmp_path)
-    name, first, last, sections = parse_sections(text)
+        text = extract_text(tmp_path)
 
-    output_path = create_document(name, first, last, sections)
+        name, first, last, sections = parse_sections(text)
 
-    with open(output_path, "rb") as f:
-        st.download_button(
-            label="Download BRFv1.0 Resume",
-            data=f,
-            file_name=f"{first} {last}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        output_path = create_document(name, first, last, sections)
+
+        with open(output_path, "rb") as f:
+            st.download_button(
+                label="Download BRFv1.0 Resume",
+                data=f,
+                file_name=f"{first} {last}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
