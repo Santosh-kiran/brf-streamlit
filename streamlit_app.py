@@ -4,18 +4,19 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 import pdfplumber
-import docx2txt
 import re
 import io
+import tempfile
+from docx import Document as DocxReader
 
 st.set_page_config(page_title="Resume Formatter", layout="centered")
 st.title("Resume Formatter Application")
 
 uploaded_file = st.file_uploader("Upload Resume (Any Format)", type=None)
 
-# ----------------------------
-# 1️⃣ CONVERT ANY FILE TO TXT
-# ----------------------------
+# ---------------------------------------------------
+# 1️⃣ CONVERT ANY FILE TO CLEAN TXT
+# ---------------------------------------------------
 def convert_to_text(file):
     name = file.name.lower()
 
@@ -29,7 +30,12 @@ def convert_to_text(file):
         return text
 
     elif name.endswith(".docx"):
-        return docx2txt.process(file)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            tmp.write(file.read())
+            tmp_path = tmp.name
+
+        doc = DocxReader(tmp_path)
+        return "\n".join([para.text for para in doc.paragraphs])
 
     elif name.endswith(".txt"):
         return file.read().decode("utf-8")
@@ -37,19 +43,21 @@ def convert_to_text(file):
     else:
         return ""
 
-# ----------------------------
-# 2️⃣ CLEAN RAW TXT
-# ----------------------------
-def clean_raw_text(text):
+
+# ---------------------------------------------------
+# 2️⃣ CLEAN TEXT
+# ---------------------------------------------------
+def clean_text(text):
     text = re.sub(r"http\S+", "", text)  # remove URLs
-    text = re.sub(r"[•●▪◦*-]", "", text)  # remove bullets
+    text = re.sub(r"[•●▪◦*-]", "", text)  # remove bullets/symbols
     text = re.sub(r"\t", " ", text)
     text = re.sub(r"\n+", "\n", text)
     return text.strip()
 
-# ----------------------------
-# 3️⃣ SPLIT INTO SECTIONS
-# ----------------------------
+
+# ---------------------------------------------------
+# 3️⃣ DETECT SECTIONS
+# ---------------------------------------------------
 def detect_sections(text):
     sections = {
         "summary": [],
@@ -90,28 +98,29 @@ def detect_sections(text):
 
     return sections
 
-# ----------------------------
-# 4️⃣ FORMAT DOCX STRICTLY
-# ----------------------------
-def format_document(name, sections):
+
+# ---------------------------------------------------
+# 4️⃣ BUILD FINAL DOCX STRICTLY
+# ---------------------------------------------------
+def build_document(candidate_name, sections):
 
     doc = Document()
 
-    # Normal style enforcement
+    # Global font rule
     style = doc.styles["Normal"]
     style.font.name = "Times New Roman"
     style._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
     style.font.size = Pt(10)
 
-    # Candidate Name
+    # ---------------- NAME ----------------
     name_para = doc.add_paragraph()
-    run = name_para.add_run(name.title())
+    run = name_para.add_run(candidate_name.title())
     run.bold = True
     run.font.size = Pt(11)
     run.font.name = "Times New Roman"
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    doc.add_paragraph("")  # one line gap
+    doc.add_paragraph("")  # one line space
 
     # ---------------- SUMMARY ----------------
     if sections["summary"]:
@@ -173,29 +182,32 @@ def format_document(name, sections):
 
     return doc
 
-# ----------------------------
+
+# ---------------------------------------------------
 # MAIN EXECUTION
-# ----------------------------
+# ---------------------------------------------------
 if uploaded_file:
 
-    raw = convert_to_text(uploaded_file)
+    raw_text = convert_to_text(uploaded_file)
 
-    if not raw:
+    if not raw_text:
         st.error("Unsupported file format.")
     else:
-        clean_text = clean_raw_text(raw)
-        sections = detect_sections(clean_text)
+        cleaned = clean_text(raw_text)
+        sections = detect_sections(cleaned)
 
-        lines = clean_text.split("\n")
+        lines = cleaned.split("\n")
         candidate_name = lines[0].strip()
 
-        document = format_document(candidate_name, sections)
+        final_doc = build_document(candidate_name, sections)
 
         buffer = io.BytesIO()
-        document.save(buffer)
+        final_doc.save(buffer)
         buffer.seek(0)
 
         file_name = f"{candidate_name.title()}.docx"
+
+        st.success("Formatted Resume Ready")
 
         st.download_button(
             "Download Formatted Resume",
