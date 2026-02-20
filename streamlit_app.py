@@ -1,254 +1,205 @@
 import streamlit as st
-import tempfile
-import os
-import re
 from docx import Document
 from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+import pdfplumber
 import docx2txt
+import re
+import io
 
-# =========================
-# SETTINGS
-# =========================
-FONT_NAME = "Times New Roman"
-FONT_SIZE = 10
+st.set_page_config(page_title="Resume Formatter", layout="centered")
+st.title("Resume Formatter Application")
 
-SUMMARY_HEADING = "Summary :"
-TECH_HEADING = "Technical Skills :"
-EDU_HEADING = "Education :"
-EXP_HEADING = "Professional Experience :"
+uploaded_file = st.file_uploader("Upload Resume (Any Format)", type=None)
 
-st.title("BRFv1.0 Strict Resume Formatter (DOCX Only)")
+# ----------------------------
+# 1️⃣ CONVERT ANY FILE TO TXT
+# ----------------------------
+def convert_to_text(file):
+    name = file.name.lower()
 
-uploaded_file = st.file_uploader("Upload Resume (DOCX only)", type=["docx"])
+    if name.endswith(".pdf"):
+        text = ""
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                content = page.extract_text()
+                if content:
+                    text += content + "\n"
+        return text
 
+    elif name.endswith(".docx"):
+        return docx2txt.process(file)
 
-# =========================
-# EXTRACT TEXT
-# =========================
-def extract_text(path):
-    return docx2txt.process(path)
+    elif name.endswith(".txt"):
+        return file.read().decode("utf-8")
 
-
-# =========================
-# REMOVE ORIGINAL BULLETS
-# =========================
-def remove_original_bullets(line):
-    return re.sub(
-        r'^\s*[\-\•\●\▪\◦\■\□\*\–\—\→\►\➤\➔\➢\✓\✔\·]+\s*',
-        '',
-        line
-    )
-
-
-# =========================
-# BRF BULLET FORMAT
-# • + TWO SPACES + TEXT
-# =========================
-def add_brf_bullet(doc, text):
-    para = doc.add_paragraph()
-    para.add_run("•  " + text)
-    return para
-
-
-# =========================
-# GLOBAL FORMATTING
-# =========================
-def apply_global_formatting(doc):
-    style = doc.styles["Normal"]
-    style.font.name = FONT_NAME
-    style.font.size = Pt(FONT_SIZE)
-
-    for p in doc.paragraphs:
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(0)
-        p.paragraph_format.line_spacing = 1
-
-
-# =========================
-# PROJECT HEADER FORMAT
-# =========================
-def add_project_header(doc, header_line):
-    para = doc.add_paragraph()
-
-    duration_match = re.search(
-        r'([A-Za-z]{3,9}\s\d{4}\s?[–-]\s?[A-Za-z]{3,9}\s\d{4}|Present|Current)',
-        header_line
-    )
-
-    if duration_match:
-        duration = duration_match.group(0)
-        left_part = header_line.replace(duration, "").strip()
-
-        para.add_run(left_part)
-        para.add_run("\t")
-        para.add_run(duration)
-
-        para.paragraph_format.tab_stops.add_tab_stop(
-            Pt(450),
-            WD_TAB_ALIGNMENT.RIGHT
-        )
     else:
-        para.add_run(header_line)
+        return ""
 
+# ----------------------------
+# 2️⃣ CLEAN RAW TXT
+# ----------------------------
+def clean_raw_text(text):
+    text = re.sub(r"http\S+", "", text)  # remove URLs
+    text = re.sub(r"[•●▪◦*-]", "", text)  # remove bullets
+    text = re.sub(r"\t", " ", text)
+    text = re.sub(r"\n+", "\n", text)
+    return text.strip()
 
-# =========================
-# SAFE PARSER
-# =========================
-def parse_sections(text):
-
-    if not text or not text.strip():
-        raise ValueError("Resume text could not be extracted. Please upload editable DOCX file.")
-
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-
-    if len(lines) == 0:
-        raise ValueError("Resume appears empty.")
-
-    name = lines[0]
-
-    name_parts = name.split()
-    if len(name_parts) == 1:
-        first = name_parts[0]
-        last = ""
-    else:
-        first = name_parts[0]
-        last = " ".join(name_parts[1:])
-
+# ----------------------------
+# 3️⃣ SPLIT INTO SECTIONS
+# ----------------------------
+def detect_sections(text):
     sections = {
         "summary": [],
-        "technical": [],
+        "skills": [],
         "education": [],
+        "certification": [],
+        "training": [],
         "experience": []
     }
 
     current = None
+    lines = text.split("\n")
 
-    for line in lines[1:]:
-        lower = line.lower()
+    for line in lines:
+        lower = line.lower().strip()
 
-        if "summary" in lower:
+        if "summary" in lower or "profile" in lower:
             current = "summary"
             continue
-        elif "technical" in lower:
-            current = "technical"
+        elif "technical skills" in lower or lower == "skills":
+            current = "skills"
             continue
         elif "education" in lower:
             current = "education"
+            continue
+        elif "certification" in lower:
+            current = "certification"
+            continue
+        elif "training" in lower:
+            current = "training"
             continue
         elif "experience" in lower:
             current = "experience"
             continue
 
-        if current:
-            sections[current].append(line)
+        if current and line.strip():
+            sections[current].append(line.strip())
 
-    return name, first, last, sections
+    return sections
 
-
-# =========================
-# CREATE BRF DOCUMENT
-# =========================
-def create_document(name, first, last, sections):
+# ----------------------------
+# 4️⃣ FORMAT DOCX STRICTLY
+# ----------------------------
+def format_document(name, sections):
 
     doc = Document()
 
-    # Name centered
-    p = doc.add_paragraph(name)
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Normal style enforcement
+    style = doc.styles["Normal"]
+    style.font.name = "Times New Roman"
+    style._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+    style.font.size = Pt(10)
 
-    # ================= SUMMARY =================
-    p = doc.add_paragraph(SUMMARY_HEADING)
-    p.runs[0].bold = True
+    # Candidate Name
+    name_para = doc.add_paragraph()
+    run = name_para.add_run(name.title())
+    run.bold = True
+    run.font.size = Pt(11)
+    run.font.name = "Times New Roman"
+    name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    for line in sections["summary"]:
-        cleaned = remove_original_bullets(line).strip()
-        if cleaned:
-            add_brf_bullet(doc, cleaned)
+    doc.add_paragraph("")  # one line gap
 
-    doc.add_paragraph()
+    # ---------------- SUMMARY ----------------
+    if sections["summary"]:
+        h = doc.add_paragraph()
+        run = h.add_run("Summary")
+        run.bold = True
+        run.font.size = Pt(10)
 
-    # ================= TECHNICAL =================
-    p = doc.add_paragraph(TECH_HEADING)
-    p.runs[0].bold = True
+        for line in sections["summary"]:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.add_run("• " + line.strip())
 
-    for line in sections["technical"]:
-        cleaned = remove_original_bullets(line).strip()
-        if cleaned:
-            doc.add_paragraph(cleaned)
+        doc.add_paragraph("")
 
-    # ================= EDUCATION =================
-    p = doc.add_paragraph(EDU_HEADING)
-    p.runs[0].bold = True
+    # ---------------- TECHNICAL SKILLS ----------------
+    if sections["skills"]:
+        h = doc.add_paragraph()
+        run = h.add_run("Technical Skills")
+        run.bold = True
+        run.font.size = Pt(10)
 
-    for line in sections["education"]:
-        cleaned = remove_original_bullets(line).strip()
-        if cleaned:
-            doc.add_paragraph(cleaned)
+        for line in sections["skills"]:
+            p = doc.add_paragraph(line.strip())
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
 
-    doc.add_paragraph()
+        doc.add_paragraph("")
 
-    # ================= EXPERIENCE =================
-    p = doc.add_paragraph(EXP_HEADING)
-    p.runs[0].bold = True
+    # ---------------- EDUCATION / CERTIFICATION / TRAINING ----------------
+    if sections["education"] or sections["certification"] or sections["training"]:
+        h = doc.add_paragraph()
+        run = h.add_run("Education, Certification & Training")
+        run.bold = True
+        run.font.size = Pt(10)
 
-    exp_lines = [
-        remove_original_bullets(l).strip()
-        for l in sections["experience"]
-        if l.strip()
-    ]
+        for key in ["education", "certification", "training"]:
+            for line in sections[key]:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                p.add_run("  • " + line.strip())
 
-    i = 0
-    while i < len(exp_lines):
+        doc.add_paragraph("")
 
-        add_project_header(doc, exp_lines[i])
-        i += 1
+    # ---------------- PROFESSIONAL EXPERIENCE ----------------
+    if sections["experience"]:
+        h = doc.add_paragraph()
+        run = h.add_run("Professional Experience")
+        run.bold = True
+        run.font.size = Pt(10)
 
-        if i < len(exp_lines):
-            doc.add_paragraph(exp_lines[i])
-            i += 1
+        for line in sections["experience"]:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.add_run("  • " + line.strip())
 
-        while i < len(exp_lines) and not re.search(
-            r'[A-Za-z]{3,9}\s\d{4}\s?[–-]\s?[A-Za-z]{3,9}\s\d{4}',
-            exp_lines[i]
-        ):
-            add_brf_bullet(doc, exp_lines[i])
-            i += 1
+    return doc
 
-        doc.add_paragraph()
-
-    apply_global_formatting(doc)
-
-    filename = f"{first} {last}.docx"
-    output_path = os.path.join(tempfile.gettempdir(), filename)
-    doc.save(output_path)
-
-    return output_path
-
-
-# =========================
+# ----------------------------
 # MAIN EXECUTION
-# =========================
+# ----------------------------
 if uploaded_file:
 
-    try:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
+    raw = convert_to_text(uploaded_file)
 
-        text = extract_text(tmp_path)
+    if not raw:
+        st.error("Unsupported file format.")
+    else:
+        clean_text = clean_raw_text(raw)
+        sections = detect_sections(clean_text)
 
-        name, first, last, sections = parse_sections(text)
+        lines = clean_text.split("\n")
+        candidate_name = lines[0].strip()
 
-        output_path = create_document(name, first, last, sections)
+        document = format_document(candidate_name, sections)
 
-        with open(output_path, "rb") as f:
-            st.download_button(
-                label="Download BRFv1.0 Resume",
-                data=f,
-                file_name=f"{first} {last}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+        buffer = io.BytesIO()
+        document.save(buffer)
+        buffer.seek(0)
 
-    except Exception as e:
-        st.error(str(e))
+        file_name = f"{candidate_name.title()}.docx"
+
+        st.download_button(
+            "Download Formatted Resume",
+            buffer,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
